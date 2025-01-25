@@ -46,7 +46,7 @@ def generate_values():
         'voltage': voltage,
         'latitude': generate_values.lat,
         'longitude': generate_values.lon,
-        'team_id': 'XXXX',  # Replace with your team ID
+        'team_id': '3134',  
         'mode': 'F',  # Example mode
         'last_command': 'CMD',  # Example command
     }
@@ -62,10 +62,36 @@ app.layout = html.Div([
     html.Div([
         # Sidebar
         html.Div([
+            
+            # File Upload
+            dcc.Upload(
+                id='upload-data',
+                children=html.Div([
+                'Select CSV File '
+                ]),
+                style={
+                    'width': '100%',
+                    'height': '60px',
+                    'lineHeight': '60px',
+                    'borderWidth': '1px',
+                    'borderStyle': 'dashed',
+                    'borderRadius': '5px',
+                    'textAlign': 'center',
+                    'marginBottom': '10px'
+                },
+            ),
+            html.Div(id='output-data-upload'),
+
             # Simulation Control
             html.Button(
-                "SIM enable",
-                id='sim-button',
+                "SIM Enable",
+                id='sim-enable-button',
+                style={'width': '100%', 'marginBottom': '10px'}
+            ),
+
+            html.Button(
+                "SIM Activate",
+                id='sim-activate-button',
                 style={'width': '100%', 'marginBottom': '10px'}
             ),
             
@@ -73,9 +99,15 @@ app.layout = html.Div([
             html.Button(
                 "Calibrate",
                 id='calibrate-button',
-                style={'width': '100%', 'marginBottom': '20px'}
+                style={'width': '100%', 'marginBottom': '10px'}
             ),
             
+            html.Button(
+                "Set Time",
+                id='set-time-button',
+                style={'width': '100%', 'marginBottom': '20px'}
+            ),
+
             # Status Information
             html.Div([
                 html.P("Mission Time:", style={'fontWeight': 'bold'}),
@@ -149,9 +181,9 @@ app.layout = html.Div([
 
 # Callback for sim button state
 @callback(
-    Output('sim-button', 'children'),
-    Input('sim-button', 'n_clicks'),
-    State('sim-button', 'children')
+    Output('sim-enable-button', 'children'),
+    Input('sim-enable-button', 'n_clicks'),
+    State('sim-enable-button', 'children')
 )
 def toggle_sim_button(n_clicks, current_text):
     if n_clicks is None:
