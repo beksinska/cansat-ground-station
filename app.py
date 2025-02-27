@@ -1,21 +1,14 @@
 from dash import Dash, html, dcc, Output, Input, State, callback
+import dash
+import io
+import base64
 import pandas as pd
 import plotly.graph_objects as go
 import plotly.express as px
-import dash
-from datetime import datetime
-import pandas as pd
 import numpy as np
-from datetime import datetime
-import serial
 import time
 import threading
-
-SERIAL_PORT = "/dev/ttyUSB0"  # For Windows change this to "COM3" or you know better
-BAUD_RATE = 9600
-
-import serial
-import pandas as pd
+from communication import send_pressure_via_xbee, read_telemetry
 
 columns = [
     "TEAM_ID", "MISSION_TIME", "PACKET_COUNT", "MODE", "STATE",
@@ -28,214 +21,44 @@ columns = [
 
 # Global DataFrame to store telemetry
 telemetry = pd.DataFrame(columns=columns)
-#Open serial port
-ser = serial.Serial(SERIAL_PORT, BAUD_RATE, timeout=1)
 
-start_time = pd.to_datetime("00:00:00", format="%H:%M:%S")
+sim_enabled = False
+sim_activated = False
+sim_mode_active = False
+sim_data = pd.DataFrame()
 
-def generate_missing_values():
-   
-    accel_r = np.random.uniform(-1, 1)  # Random small acceleration
-    accel_p = np.random.uniform(-1, 1)
-    accel_y = np.random.uniform(-1, 1)
+def process_uploaded_file(contents):
+    """Decodes the uploaded CSV file and returns a Pandas DataFrame."""
+    content_string = contents.split(',')[1]  # Extract only the Base64 part
+    decoded = base64.b64decode(content_string)  # Decode Base64
+    df = pd.read_csv(io.StringIO(decoded.decode('utf-8')))  # Convert to DataFrame
+    return df
 
-    mag_r = np.random.uniform(-50, 50)  # Simulated magnetometer readings
-    mag_p = np.random.uniform(-50, 50)
-    mag_y = np.random.uniform(-50, 50)
+def check_simulation_mode():
+    """Check if both simulation enable and activate are pressed"""
+    return sim_enabled and sim_activated
 
-    gps_lat = 28.5729 + np.random.normal(0, 0.0001)  # Simulated GPS drift
-    gps_lon = -80.6490 + np.random.normal(0, 0.0001)
-    gps_alt = np.random.uniform(0, 1000)  # Random altitude between 0-1000m
-    gps_sats = np.random.randint(4, 12)  # Random satellite count (4-12)
+def read_simulated_pressure():
+    """Extract latest pressure value from simulation file"""
+    global sim_data
+    if not sim_data.empty:
+        return sim_data["PRESSURE"].iloc[-1]  # Get latest pressure
+    return None
 
-    return {
-        "ACCEL_R": accel_r, "ACCEL_P": accel_p, "ACCEL_Y": accel_y,
-        "MAG_R": mag_r, "MAG_P": mag_p, "MAG_Y": mag_y,
-        "GPS_LATITUDE": gps_lat, "GPS_LONGITUDE": gps_lon, "GPS_ALTITUDE": gps_alt, "GPS_SATS": gps_sats
-    }
+"""Send pressure via XBee if in simulation mode"""
+def process_simulation_telemetry():
+    global sim_enabled, sim_activated
+    while True:
+        if check_simulation_mode():
+            pressure = read_simulated_pressure()
+            send_pressure_via_xbee(pressure)  # Send pressure via XBee
 
-def read_telemetry():
-    
-    try:
-        while True:
-            line = ser.readline().decode('utf-8').strip()  # Read line from serial
-            if line:
-                values = line.split(",")
-            if len(values) == len(columns):
-                # Convert to dictionary
-                telemetry_data = {
-                    'TEAM_ID': int(values[0]),
-                    'MISSION_TIME': (datetime.now() - start_time).seconds,  # Generated mission time
-                    'PACKET_COUNT': int(values[2]),
-                    'MODE': values[3],
-                    'STATE': values[4],
-                    'ALTITUDE': float(values[5]),
-                    'TEMPERATURE': float(values[6]),
-                    'PRESSURE': float(values[7]),
-                    'VOLTAGE': float(values[8]),
-                    'GYRO_R': float(values[9]),
-                    'GYRO_P': float(values[10]),
-                    'GYRO_Y': float(values[11]),
-                    'CMD_ECHO': values[23]
-                }
-
-                telemetry = pd.concat([telemetry, pd.DataFrame([telemetry_data])], ignore_index=True)
-
-                print(f"Received: {telemetry_data}")
-
-                generated_values = generate_missing_values()
-                telemetry_data.update(generated_values)
-
-
-            else:
-                print(f"Invalid Packet: {line}")
-
-            time.sleep(1)  # Read every second
-
-    except KeyboardInterrupt:
-        print("Stopping telemetry read.")
-    finally:
-        ser.close()  # Close serial port
+        # Wait for 1 second before next iteration
+        time.sleep(1)
 
 thread = threading.Thread(target=read_telemetry, daemon=True)
 thread.start()
 
-'''
-                if len(data_list) == 25:  
-                    telemetry_data = {
-                        'TEAM_ID': int(data_list[0]),
-                        #'MISSION_TIME': data_list[1],
-                        'PACKET_COUNT': int(data_list[2]),
-                        'MODE': data_list[3],
-                        #'STATE': data_list[4],
-                        'ALTITUDE': float(data_list[5]),
-                        'TEMPERATURE': float(data_list[6]),
-                        'PRESSURE': float(data_list[7]),
-                        'VOLTAGE': float(data_list[8]),
-                        'GYRO_R': float(data_list[9]),
-                        'GYRO_P': float(data_list[10]),
-                        'GYRO_Y': float(data_list[11]),
-                        #'ACCEL_R': float(data_list[12]),
-                        #'ACCEL_P': float(data_list[13]),
-                        #'ACCEL_Y': float(data_list[14]),
-                        #'MAG_R': float(data_list[15]),
-                        #'MAG_P': float(data_list[16]),
-                        #'MAG_Y': float(data_list[17]),
-                        #'AUTO_GYRO_ROTATION_RATE': float(data_list[18]),
-                        #'GPS_TIME': data_list[19],
-                        #'GPS_ALTITUDE': float(data_list[20]),
-                        #'GPS_LATITUDE': float(data_list[21]),
-                        #'GPS_LONGITUDE': float(data_list[22]),
-                        #'GPS_SATS': int(data_list[23]),
-                        #'CMD_ECHO': data_list[24]
-                    }
-                    
-                    print("Received Telemetry Data:", telemetry_data)
-                    
-                    # Store data in a Pandas DataFrame
-                    telemetry = pd.DataFrame([telemetry_data])
-                    return telemetry  # Return dataframe for further processing
-                else:
-                    print("Invalid telemetry packet:", line)
-
-num_points = 691
-
-def generate_flight_data(num_points):
-    # Start with a base location (example: Kennedy Space Center)
-    base_lat = 28.5729
-    base_lon = -80.6490
-    base_alt = 0  # sea level
-
-    # Generate timestamps
-    start_time = datetime.now()
-    timestamps = [(start_time + timedelta(seconds=i)).strftime('%H:%M:%S') for i in range(num_points)]
-
-    # Generate flight path data
-    gfd = []
-    for i in range(num_points):
-        # Calculate progress through flight (0 to 1)
-        progress = i / num_points
-        
-        # Simulate launch trajectory
-        # Add some randomness to make it more realistic
-        lat = base_lat + (progress * 0.1) + np.random.normal(0, 0.0001)
-        lon = base_lon + (progress * 0.1) + np.random.normal(0, 0.0001)
-        
-        # Simulate altitude profile (parabolic trajectory)
-        if progress < 0.5:
-            altitude = 1000 * (4 * progress * (1 - progress))  # Rising
-        else:
-            altitude = 1000 * (4 * (progress - 0.5) * (1.5 - progress))  # Falling
-        
-        # Add some noise to altitude
-        altitude = max(0, altitude + np.random.normal(0, 10))
-
-        # Simulate accelerometer data (m/s²)
-        accel_x = np.random.normal(0, 0.2)  # Small variations around 0
-        accel_y = np.random.normal(0, 0.2)
-        accel_z = np.random.normal(9.81, 0.2)  # Gravity effect
-        
-        # Simulate magnetometer data (Gauss)
-        mag_x = np.random.normal(0.5, 0.05)  # Earth's magnetic field
-        mag_y = np.random.normal(0.3, 0.05)
-        mag_z = np.random.normal(0.2, 0.05)
-
-        row = {
-            'GPS_TIME': timestamps[i],
-            'GPS_ALTITUDE': altitude,
-            'GPS_LATITUDE': lat,
-            'GPS_LONGITUDE': lon,
-            'GPS_SATS': str(np.random.randint(4, 12)),
-            'CMD_ECHO': 'CMD',
-            'ACCEL_R': accel_x,
-            'ACCEL_P': accel_y,
-            'ACCEL_Y': accel_z,
-            'MAG_R': mag_x,
-            'MAG_P': mag_y,
-            'MAG_Y': mag_z
-        }
-        gfd.append(row)
-    
-    # Create DataFrame and save to CSV
-    return gfd
-
-
-df = pd.read_csv('flight_simulation.csv', skipinitialspace=True) 
-df.columns = df.columns.str.strip()
-
-# Generate mission times (increments every second) and convert to hh:mm:ss format
-mission_times = [start_time + pd.to_timedelta(i, unit='s') for i in range(num_points)]
-mission_times = [t.strftime("%H:%M:%S") for t in mission_times]
-
-# Convert numeric values (removing units where necessary)
-def clean_numeric(value):
-    if isinstance(value, str):
-        value = value.strip()  # Remove leading/trailing spaces
-        parts = value.split()  # Split value from unit (if any)
-        try:
-            return float(parts[0])  # Extract only the number
-        except ValueError:
-            return value  # Return original string if conversion fails
-    return value 
-
-# Replace "INVALID" values with NaN
-df.replace("INVALID", np.nan, inplace=True)
-
-numeric_columns = ['Packet_Count', 'Altitude', 'Temperature', 'Pressure', 'Voltage',
-                   'Gyro_R', 'Gyro_P', 'Gyro_Y']
-for col in numeric_columns:
-    df[col] = df[col].astype(str).apply(clean_numeric)
-
-# Convert Mission_Time to a numerical format (seconds)
-df["Mission_Time"] = mission_times
-
-values = df.to_dict('records')
-gps = generate_flight_data(num_points)
-print(gps.head())
-gps_values = gps.to_dict('records')
-#telemetry = read_telemetry(SERIAL_PORT, BAUD_RATE)
-print(telemetry.head())
-'''
 
 # Initialize the Dash app
 app = Dash(__name__)
@@ -264,7 +87,8 @@ app.layout = html.Div([
                     'marginBottom': '10px'
                 },
             ),
-            html.Div(id='output-data-upload'),
+            html.Div(id='file-upload-status'),
+
             # Simulation Control
             html.Button(
                 "SIM Enable",
@@ -277,6 +101,8 @@ app.layout = html.Div([
                 id='sim-activate-button',
                 style={'width': '100%', 'marginBottom': '10px'}
             ),
+
+            html.Div(id='sim-status'),
 
             html.Button(
                 "Setup",
@@ -303,7 +129,6 @@ app.layout = html.Div([
                 style={'width': '100%', 'marginBottom': '20px'}
             ),
 
-           
             # Status Information
             html.Div([
                 html.Div([
@@ -318,7 +143,7 @@ app.layout = html.Div([
 
                 html.Div([
                 html.Span("State:", style={'fontWeight': 'bold', 'marginRight': '4px'}),
-                html.Span("ASCENT", id='state-display')],
+                html.Span("", id='state-display')],
                 style={'display': 'flex', 'flexDirection': 'row'}),
 
                 html.Div([
@@ -338,7 +163,7 @@ app.layout = html.Div([
 
                 html.Div([
                 html.Span("Satellites:", style={'fontWeight': 'bold', 'marginRight': '4px'}),
-                html.Span("4")],
+                html.Span("")],
                 style={'display': 'flex', 'flexDirection': 'row'}),
 
                 html.Div([
@@ -365,14 +190,14 @@ app.layout = html.Div([
                 dcc.Graph(id='temperature-graph', style={'width': '33%', 'height': '33%'})
             ], style={'display': 'flex', 'marginBottom': '20px'}),
             
-            # Second row
+            # Second row - Voltage, Gyro rotation, Map
             html.Div([
                 dcc.Graph(id='voltage-graph', style={'width': '33%', 'height': '33%'}),
                 dcc.Graph(id='gyro-rotation-rate-graph', style={'width': '33%', 'height': '33%'}),
                 dcc.Graph(id='map-plot', style={'width': '33%', 'height': '33%'})
             ], style={'display': 'flex', 'marginBottom': '20px'}),
             
-            # Third row
+            # Third row - Magnetometer, Gyro, Accelerometer
             html.Div([
                 dcc.Graph(id='magnetometer-3d', style={'width': '33%', 'height': '33%'}),
                 dcc.Graph(id='gyro-graph', style={'width': '33%', 'height': '33%'}),
@@ -382,9 +207,6 @@ app.layout = html.Div([
         ], style={'flex': '1', 'height': '100vh', 'overflowY': 'auto', 'padding': '10px'}),
     ], style={'display': 'flex', 'font-size': '16px'}),
     
-    # Hidden storage
-    dcc.Store(id='telemetry-data-store', data=[]),
-    dcc.Store(id='start-time-store'),
     dcc.Interval(
         id='interval-component',
         interval=1000,  # 1 second interval
@@ -392,9 +214,9 @@ app.layout = html.Div([
     )
 ])
 
-# Callback for sim button state
+# Callback for sim button state - change sim enable text to sim disable
 @callback(
-    Output('sim-enable-button', 'children'),
+    Output('sim-status', 'children'),
     Input('sim-enable-button', 'n_clicks'),
     State('sim-enable-button', 'children')
 )
@@ -403,24 +225,37 @@ def toggle_sim_button(n_clicks, current_text):
         return "SIM enable"
     return "SIM disable" if current_text == "SIM enable" else "SIM enable"
 
-# Load data at startup
+# Callback for updating simulation status
 @callback(
-    Output('telemetry-data-store', 'data'),
-    Input('interval-component', 'n_intervals'),
-    State('telemetry-data-store', 'data')
+    Output('sim-status', 'children'),
+    Input('sim-activate-button', 'n_clicks'),
+    State('sim-enable-button', 'children'),
 )
-def update_data_store(n, current_data):
-    if n == 0:
-        current_data.append((values[0] | gps_values[0]))
-        print(f"Initial Data: {current_data}") 
-        return current_data  # Return first row
-    
-    if n < len(values):  # Check if we still have data to read
-        current_data.append((values[n] | gps_values[n]))  # Add next row
-        print(f"Updated Data: {current_data[-1]}")  
-        return current_data
-    
-    return dash.no_update
+def update_simulation_status(activate_clicks, current_text):
+    global sim_enabled, sim_activated
+    sim_enabled = current_text == "SIM disable" 
+    sim_activated = activate_clicks/2 % 2 == 1
+
+    if sim_enabled and sim_activated:
+        return "Simulation Mode: ACTIVE"
+    return "Simulation Mode: INACTIVE"
+
+# Callback for uploading simulation file
+@callback(
+    Output('upload-status', 'children'),
+    Input('upload-data', 'contents'),
+    State('upload-data', 'filename'),
+    prevent_initial_call=True
+)
+def upload_simulation_file(contents, filename):
+    global sim_data  # Store the uploaded DataFrame globally
+    if contents is not None:
+        try:
+            sim_data = process_uploaded_file(contents)
+            return f"Successfully uploaded {filename}. Simulation data is ready."
+        except Exception as e:
+            return f"Error processing file: {str(e)}"
+    return "No file uploaded."
 
 # Main callback for updating all visualizations
 @callback(
@@ -440,13 +275,9 @@ def update_data_store(n, current_data):
      Output('command-display', 'children'),
      Output('gps-time-display', 'children')],
     Input('interval-component', 'n_intervals'),
-    State('telemetry-data-store', 'data'),
-    State('start-time-store', 'data'),
     prevent_initial_call=True
 )
 def update_graphs(n):
-    if telemetry.empty:
-        return px.line(), px.line(), px.line(), px.line(), px.line()
 
     # Limit to last 100 readings for smoother visualization
     dff = telemetry.tail(100)
@@ -462,7 +293,7 @@ def update_graphs(n):
         ))
         fig.update_layout(
             mapbox=dict(
-                style="open-street-map",
+                style='open-street-map',
                 center=dict(lat=dff[lat].iloc[-1], lon=dff[lon].iloc[-1]),
                 zoom=13
             ),
@@ -488,11 +319,11 @@ def update_graphs(n):
         )
         return fig
 
-    altitude_fig = px.line(dff, x="MISSION_TIME", y="ALTITUDE", title="Altitude Over Time")
-    temperature_fig = px.line(dff, x="MISSION_TIME", y="TEMPERATURE", title="Temperature Over Time")
-    pressure_fig = px.line(dff, x="MISSION_TIME", y="PRESSURE", title="Pressure Over Time")
-    voltage_fig = px.line(dff, x="MISSION_TIME", y="VOLTAGE", title="Voltage Over Time")
-    gyro_rotation_rate_fig = px.line(dff, x="MISSION_TIME", y="GYRO_R", title="Gyro Rotation Rate Over Time")
+    altitude_fig = px.line(dff, x='MISSION_TIME', y='ALTITUDE', title='Altitude Over Time')
+    temperature_fig = px.line(dff, x='MISSION_TIME', y='TEMPERATURE', title='Temperature Over Time')
+    pressure_fig = px.line(dff, x='MISSION_TIME', y='PRESSURE', title='Pressure Over Time')
+    voltage_fig = px.line(dff, x='MISSION_TIME', y='VOLTAGE', title='Voltage Over Time')
+    gyro_rotation_rate_fig = px.line(dff, x='MISSION_TIME', y='GYRO_R', title='Gyro Rotation Rate Over Time')
     map_fig = create_map('GPS_LATITUDE', 'GPS_LONGITUDE')
     mag_fig = create_3d_plot('MAG_R', 'MAG_P', 'MAG_Y', 'Magnetometer Readings')
     gyro_fig = create_3d_plot('GYRO_R', 'GYRO_P', 'GYRO_Y', 'Gyro Readings')
@@ -510,104 +341,13 @@ def update_graphs(n):
         mag_fig,
         gyro_fig,
         acc_fig,
-        latest['Mission_Time'],
-        latest['Team_ID'],
-        latest['Packet_Count'],
-        latest['Mode'],
+        latest['MISSION_TIME'],
+        latest['TEAM_ID'],
+        latest['PACKET_COUNT'],
+        latest['MODE'],
         latest['CMD_ECHO'],
         latest['GPS_TIME']
         ]
     
-
-'''
-def update_telemetry(n_intervals, current_data, start_time):
-    if not current_data:
-        return [dash.no_update] * 15
-    
-    df = pd.DataFrame(current_data)
-    
-    # Create line plots
-    def create_line_plot(y_data, title, y_label):
-        fig = go.Figure()
-        fig.add_trace(go.Scatter(x=df['Mission_Time'], y=df[y_data], mode='lines', name=y_label))
-        fig.update_layout(
-            title=title,
-            xaxis_title='Mission Time (MM:SS)',
-            yaxis_title=y_label,
-            margin=dict(l=0, r=0, t=30, b=0),
-            height=250
-        )
-        return fig
-    
-    # Create 3D plots
-    def create_3d_plot(x_data, y_data, z_data, title):
-        fig = go.Figure()
-        fig.add_trace(go.Scatter3d(
-            x=df[x_data],
-            y=df[y_data],
-            z=df[z_data],
-            mode='lines',
-            name=title
-        ))
-        fig.update_layout(
-            title=title,
-            margin=dict(l=0, r=0, t=30, b=0),
-            height=300
-        )
-        return fig
-
-    # Create map
-    def create_map(lat, lon):
-        fig = go.Figure()
-        fig.add_trace(go.Scattermapbox(
-            lat=df[lat],
-            lon=df[lon],
-            mode='lines+markers',
-            marker=dict(size=10)
-        ))
-        fig.update_layout(
-            mapbox=dict(
-                style="open-street-map",
-                center=dict(lat=df[lat].iloc[-1], lon=df[lon].iloc[-1]),
-                zoom=13
-            ),
-            margin=dict(l=10, r=0, t=30, b=0),
-            height=250
-        )
-        return fig
-    
-    # Create all plots
-    pressure_fig = create_line_plot('Pressure', 'Pressure vs Time', 'Pressure (kPa)')
-    altitude_fig = create_line_plot('Altitude', 'Altitude vs Time', 'Altitude (m)')
-    temperature_fig = create_line_plot('Temperature', 'Temperature vs Time', 'Temperature (°C)')
-    voltage_fig = create_line_plot('Voltage', 'Voltage vs Time', 'Voltage (V)')
-    gyro_rotation_rate_fig = create_line_plot('Gyro_R', 'Gyro Rotation Rate vs Time', 'Gyro Rotation Rate (°/s)')
-    map_fig = create_map('GPS_LATITUDE', 'GPS_LONGITUDE')
-    mag_fig = create_3d_plot('MAG_R', 'MAG_P', 'MAG_Y', 'Magnetometer Readings (G)')
-    gyro_fig = create_3d_plot('Gyro_R', 'Gyro_P', 'Gyro_Y', 'Gyro Readings (°/s)')
-    acc_fig = create_3d_plot('ACCEL_R', 'ACCEL_P', 'ACCEL_Y', 'Accelerometer Readings (m/s²)')
-    
-    # Get latest values
-    latest = df.iloc[-1]
-    
-    return [
-        pressure_fig,
-        altitude_fig,
-        temperature_fig,
-        voltage_fig,
-        gyro_rotation_rate_fig,
-        map_fig,
-        mag_fig,
-        gyro_fig,
-        acc_fig,
-        latest['Mission_Time'],
-        latest['Team_ID'],
-        latest['Packet_Count'],
-        latest['Mode'],
-        latest['CMD_ECHO'],
-        latest['GPS_TIME']
-    ]
-'''
-
-if __name__ == "__main__":
+if __name__ == '__main__':
     app.run(debug=False, port=8051)
