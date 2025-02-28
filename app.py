@@ -24,7 +24,7 @@ telemetry = pd.DataFrame(columns=columns)
 
 sim_enabled = False
 sim_activated = False
-sim_mode_active = False
+sim_status= False
 sim_data = pd.DataFrame()
 
 def process_uploaded_file(contents):
@@ -33,10 +33,6 @@ def process_uploaded_file(contents):
     decoded = base64.b64decode(content_string)  # Decode Base64
     df = pd.read_csv(io.StringIO(decoded.decode('utf-8')))  # Convert to DataFrame
     return df
-
-def check_simulation_mode():
-    """Check if both simulation enable and activate are pressed"""
-    return sim_enabled and sim_activated
 
 def read_simulated_pressure():
     """Extract latest pressure value from simulation file"""
@@ -47,18 +43,17 @@ def read_simulated_pressure():
 
 """Send pressure via XBee if in simulation mode"""
 def process_simulation_telemetry():
-    global sim_enabled, sim_activated
+    global sim_status
     while True:
-        if check_simulation_mode():
+        if sim_status:
             pressure = read_simulated_pressure()
-            send_pressure_via_xbee(pressure)  # Send pressure via XBee
+            send_pressure_via_xbee(pressure)  
 
         # Wait for 1 second before next iteration
         time.sleep(1)
 
 thread = threading.Thread(target=read_telemetry, daemon=True)
 thread.start()
-
 
 # Initialize the Dash app
 app = Dash(__name__)
@@ -214,31 +209,49 @@ app.layout = html.Div([
     )
 ])
 
-# Callback for sim button state - change sim enable text to sim disable
 @callback(
-    Output('sim-status', 'children'),
-    Input('sim-enable-button', 'n_clicks'),
-    State('sim-enable-button', 'children')
+    [
+        Output("sim-enable-button", "children"),
+        Output("sim-activate-button", "disabled"),
+        Output("sim-status", "children")
+    ],
+    [
+        Input("sim-enable-button", "n_clicks"),
+        Input("sim-activate-button", "n_clicks")
+    ],
+    prevent_initial_call=True
 )
-def toggle_sim_button(n_clicks, current_text):
-    if n_clicks is None:
-        return "SIM enable"
-    return "SIM disable" if current_text == "SIM enable" else "SIM enable"
+def update_simulation(enable_clicks, activate_clicks):
+    global sim_enabled, sim_activated, sim_status
 
-# Callback for updating simulation status
-@callback(
-    Output('sim-status', 'children'),
-    Input('sim-activate-button', 'n_clicks'),
-    State('sim-enable-button', 'children'),
-)
-def update_simulation_status(activate_clicks, current_text):
-    global sim_enabled, sim_activated
-    sim_enabled = current_text == "SIM disable" 
-    sim_activated = activate_clicks/2 % 2 == 1
+    # Toggle Sim Enable / Disable
+    if enable_clicks % 2 == 1:  # Odd clicks -> Sim Enabled
+        sim_enabled = True
+        button_text = "Sim Disable"
+        activate_disabled = False  # Enable Sim Activate button
+        print("Sim Enabled")
+    else:  # Even clicks -> Sim Disabled
+        sim_enabled = False
+        sim_activated = False
+        sim_status = False
+        button_text = "Sim Enable"
+        activate_disabled = True  # Disable Sim Activate button
+        print("Sim Disabled")
+        return button_text, activate_disabled, "Simulation Mode: INACTIVE"
+    
+    # Check Sim Activate
+    if sim_enabled and activate_clicks > 0:
+        sim_activated = True
+        print("Sim Activated")
 
-    if sim_enabled and sim_activated:
-        return "Simulation Mode: ACTIVE"
-    return "Simulation Mode: INACTIVE"
+    # Update Sim Status
+    sim_status = sim_enabled and sim_activated
+
+    # Set Status Text
+    status_text = "Simulation Mode: ACTIVE" if sim_status else "Simulation Mode: INACTIVE"
+
+    return button_text, activate_disabled, status_text
+
 
 # Callback for uploading simulation file
 @callback(
