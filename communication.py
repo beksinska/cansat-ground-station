@@ -5,7 +5,7 @@ import numpy as np
 from datetime import datetime
 from app import telemetry, columns
 
-SERIAL_PORT = "COM3"  # For Windows change this to "COM3" or you know better
+SERIAL_PORT = "COM3"  
 BAUD_RATE = 9600
 
 # Open serial port
@@ -15,10 +15,10 @@ start_time = pd.to_datetime("00:00:00", format="%H:%M:%S")
 
 def generate_missing_values():
 
-    gps_lat = 28.5729 + np.random.normal(0, 0.0001)  # Simulated GPS drift
-    gps_lon = -80.6490 + np.random.normal(0, 0.0001)
-    gps_alt = np.random.uniform(0, 1000)  # Random altitude between 0-1000m
-    gps_sats = np.random.randint(4, 12)  # Random satellite count (4-12)
+    gps_lat = 28.5729 + np.random.Generator(0, 0.0001)  # Simulated GPS drift
+    gps_lon = -80.6490 + np.random.Generator(0, 0.0001)
+    gps_alt = np.random.Generator(0, 1000)  # Random altitude between 0-1000m
+    gps_sats = np.random.Generator(4, 12)  # Random satellite count (4-12)
     gps_time = datetime.now()
     return {
         "GPS_LATITUDE": gps_lat, "GPS_LONGITUDE": gps_lon, "GPS_ALTITUDE": gps_alt, "GPS_SATS": gps_sats, "GPS_TIME": gps_time 
@@ -78,6 +78,6 @@ def read_telemetry():
 def send_pressure_via_xbee(pressure_value):
     """Send pressure data via XBee"""
     if pressure_value is not None:
-        message = f"{pressure_value:.2f}\n"  # Format pressure value
+        message = f"CMD,3134,SIMP,{pressure_value:.2f}"  # Format pressure value
         ser.write(message.encode())  # Send via XBee
         print(f"Sent Pressure via XBee: {message.strip()}")

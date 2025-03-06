@@ -25,6 +25,7 @@ telemetry = pd.DataFrame(columns=columns)
 sim_enabled = False
 sim_activated = False
 sim_status= False
+
 sim_data = pd.DataFrame()
 
 def process_uploaded_file(contents):
@@ -209,6 +210,7 @@ app.layout = html.Div([
     )
 ])
 
+# Callback for updating simulation status
 @callback(
     [
         Output("sim-enable-button", "children"),
@@ -228,19 +230,19 @@ def update_simulation(enable_clicks, activate_clicks):
     if enable_clicks % 2 == 1:  # Odd clicks -> Sim Enabled
         sim_enabled = True
         button_text = "Sim Disable"
-        activate_disabled = False  # Enable Sim Activate button
+        activate_enabled = True  # Enable Sim Activate button
         print("Sim Enabled")
     else:  # Even clicks -> Sim Disabled
         sim_enabled = False
         sim_activated = False
         sim_status = False
         button_text = "Sim Enable"
-        activate_disabled = True  # Disable Sim Activate button
+        activate_enabled = False  # Disable Sim Activate button
         print("Sim Disabled")
-        return button_text, activate_disabled, "Simulation Mode: INACTIVE"
+        return button_text, activate_enabled, "Simulation Mode: INACTIVE"
     
     # Check Sim Activate
-    if sim_enabled and activate_clicks > 0:
+    if sim_enabled and activate_clicks > 0: #Probably need to find a better solution for this, because after more than 0 clicks sim_activated will always be true when sim is enabled
         sim_activated = True
         print("Sim Activated")
 
@@ -250,7 +252,7 @@ def update_simulation(enable_clicks, activate_clicks):
     # Set Status Text
     status_text = "Simulation Mode: ACTIVE" if sim_status else "Simulation Mode: INACTIVE"
 
-    return button_text, activate_disabled, status_text
+    return button_text, activate_enabled, status_text
 
 
 # Callback for uploading simulation file
@@ -269,6 +271,14 @@ def upload_simulation_file(contents, filename):
         except Exception as e:
             return f"Error processing file: {str(e)}"
     return "No file uploaded."
+
+# Callback for starting telemetry
+@callback(
+        [Output("telemetry-button", "children"), Output("telemetry-status", "children")],
+        Input('start-telemetry-button', 'n_clicks'),
+)
+def start_telemetry(n):
+    read_telemetry()
 
 # Main callback for updating all visualizations
 @callback(
