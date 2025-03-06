@@ -1,4 +1,4 @@
-from dash import Dash, html, dcc, Output, Input, State, callback
+from dash import Dash, html, dcc, Output, Input, State, callback, ctx
 import dash
 import io
 import base64
@@ -224,35 +224,32 @@ app.layout = html.Div([
     prevent_initial_call=True
 )
 def update_simulation(enable_clicks, activate_clicks):
+    button_id = ctx.triggered_id[0]
     global sim_enabled, sim_activated, sim_status
 
-    # Toggle Sim Enable / Disable
-    if enable_clicks % 2 == 1:  # Odd clicks -> Sim Enabled
-        sim_enabled = True
-        button_text = "Sim Disable"
-        activate_enabled = True  # Enable Sim Activate button
-        print("Sim Enabled")
-    else:  # Even clicks -> Sim Disabled
-        sim_enabled = False
-        sim_activated = False
-        sim_status = False
-        button_text = "Sim Enable"
-        activate_enabled = False  # Disable Sim Activate button
-        print("Sim Disabled")
-        return button_text, activate_enabled, "Simulation Mode: INACTIVE"
-    
-    # Check Sim Activate
-    if sim_enabled and activate_clicks > 0: #Probably need to find a better solution for this, because after more than 0 clicks sim_activated will always be true when sim is enabled
-        sim_activated = True
-        print("Sim Activated")
+    # Update states based solely on the last pressed button:
+    if button_id == "sim-enable-button":
+        # Toggle the sim_enabled state
+        sim_enabled = not sim_enabled
+        # When disabling simulation, also reset sim_activated
+        if not sim_enabled:
+            sim_activated = False
+    elif button_id == "sim-activate-button":
+        # Only toggle activation if simulation is enabled
+        if sim_enabled:
+            sim_activated = not sim_activated
 
-    # Update Sim Status
+    # Compute the simulation status based on the current state
     sim_status = sim_enabled and sim_activated
 
-    # Set Status Text
-    status_text = "Simulation Mode: ACTIVE" if sim_status else "Simulation Mode: INACTIVE"
+    # Set text for the buttons
+    enable_text = "Sim Disable" if sim_enabled else "Sim Enable"
+    # The activate button should be enabled only if simulation is enabled
+    activate_enabled = not sim_enabled
 
-    return button_text, activate_enabled, status_text
+    status_text = "Simulation mode: active" if sim_status else "Simulation mode: inactive"
+
+    return enable_text, activate_enabled, status_text
 
 
 # Callback for uploading simulation file
