@@ -8,7 +8,17 @@ import plotly.express as px
 import numpy as np
 import time
 import threading
-from communication import send_pressure_via_xbee, read_telemetry
+from communication import send_pressure_via_xbee
+from datetime import datetime
+import serial
+
+SERIAL_PORT = "COM3"  
+BAUD_RATE = 9600
+
+# Open serial port
+ser = serial.Serial(SERIAL_PORT, BAUD_RATE, timeout=1)
+
+start_time = pd.to_datetime("00:00:00", format="%H:%M:%S")
 
 columns = [
     "TEAM_ID", "MISSION_TIME", "PACKET_COUNT", "MODE", "STATE",
@@ -21,6 +31,70 @@ columns = [
 
 # Global DataFrame to store telemetry
 telemetry = pd.DataFrame(columns=columns)
+
+def generate_missing_values():
+
+    gps_lat = 28.5729 + np.random.normal(0, 0.0001)  # Simulated GPS drift
+    gps_lon = -80.6490 + np.random.normal(0, 0.0001)
+    gps_alt = np.random.uniform(0, 1000)  # Random altitude between 0-1000m
+    gps_sats = np.random.randint(4, 12)
+    gps_time = datetime.now()
+    return {
+        "GPS_LATITUDE": gps_lat, "GPS_LONGITUDE": gps_lon, "GPS_ALTITUDE": gps_alt, "GPS_SATS": gps_sats, "GPS_TIME": gps_time 
+    }
+
+def read_telemetry():
+    global telemetry
+    
+    try:
+        while True:
+
+            if not ser.isOpen():
+                ser.open()
+            line = ser.readline().decode('utf-8').strip()  # Read line from serial
+            if line:
+                values = line.split(",")
+            if len(values) == 25:
+                # Convert to dictionary
+                telemetry_data = {
+                    'TEAM_ID': int(values[0]),
+                    'MISSION_TIME': datetime.strptime(values[1], "%H:%M:%S"),
+                    'PACKET_COUNT': int(values[2]),
+                    'MODE': values[3],
+                    'STATE': values[4],
+                    'ALTITUDE': float(values[5]),
+                    'TEMPERATURE': float(values[6]),
+                    'PRESSURE': float(values[7]),
+                    'VOLTAGE': float(values[8]),
+                    'GYRO_R': float(values[9]),
+                    'GYRO_P': float(values[10]),
+                    'GYRO_Y': float(values[11]),
+                    "ACCEL_R": float(values[12]), 
+                    "ACCEL_P": float(values[13]), 
+                    "ACCEL_Y": float(values[14]),
+                    "MAG_R": float(values[15]),
+                    "MAG_P": float(values[16]),
+                    "MAG_Y": float(values[17]),
+                    "AUTO_GYRO_ROTATION_RATE": float(values[18]),
+                    'CMD_ECHO': values[23]
+                }
+
+                #print(f"Received: {telemetry_data}")
+
+                generated_values = generate_missing_values()
+                telemetry_data.update(generated_values)
+
+                telemetry = pd.concat([telemetry, pd.DataFrame([telemetry_data])], ignore_index=True)
+
+            else:
+                print(f"Invalid Packet: {line}")
+
+            time.sleep(1)  # Read every second
+
+    except KeyboardInterrupt:
+        print("Stopping telemetry read.")
+    finally:
+        ser.close()  # Close serial port
 
 sim_enabled = False
 sim_activated = False
@@ -224,16 +298,18 @@ app.layout = html.Div([
     prevent_initial_call=True
 )
 def update_simulation(enable_clicks, activate_clicks):
-    button_id = ctx.triggered_id[0]
+    button_id = ctx.triggered[0]["prop_id"].split(".")[0]
+    print(f"Button ID: {button_id}")
     global sim_enabled, sim_activated, sim_status
 
-    # Update states based solely on the last pressed button:
+    # Update states based on the last pressed button:
     if button_id == "sim-enable-button":
         # Toggle the sim_enabled state
         sim_enabled = not sim_enabled
         # When disabling simulation, also reset sim_activated
         if not sim_enabled:
             sim_activated = False
+            
     elif button_id == "sim-activate-button":
         # Only toggle activation if simulation is enabled
         if sim_enabled:
@@ -299,12 +375,18 @@ def start_telemetry(n):
 )
 def update_graphs(n):
 
+    if telemetry.empty:
+        return px.line(), px.line(), px.line(), px.line(), px.line()
+
+    lat_default = 52.47
+    lon_default = 13.45
     # Limit to last 100 readings for smoother visualization
     dff = telemetry.tail(100)
 
     # Create map
     def create_map(lat, lon):
         fig = go.Figure()
+
         fig.add_trace(go.Scattermapbox(
             lat=dff[lat],
             lon=dff[lon],
@@ -349,7 +431,8 @@ def update_graphs(n):
     gyro_fig = create_3d_plot('GYRO_R', 'GYRO_P', 'GYRO_Y', 'Gyro Readings')
     acc_fig = create_3d_plot('ACCEL_R', 'ACCEL_P', 'ACCEL_Y', 'Accelerometer Readings')
     
-    latest = dff.iloc[-1]
+
+    latest = dff.tail(1).to_dict('records')[0]
 
     return [
         pressure_fig,
