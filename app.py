@@ -8,9 +8,9 @@ import plotly.express as px
 import numpy as np
 import time
 import threading
-from communication import send_pressure_via_xbee
 from datetime import datetime
 import serial
+import os
 
 SERIAL_PORT = "COM3"  
 BAUD_RATE = 9600
@@ -29,8 +29,23 @@ columns = [
     "GPS_SATS", "CMD_ECHO"
 ]
 
+#TODO: Save telemetry to a csv file
+
+TELEMETRY_FILE = "telemetry_data.csv"
+
 # Global DataFrame to store telemetry
 telemetry = pd.DataFrame(columns=columns)
+packets_received = 0
+
+if not os.path.exists(TELEMETRY_FILE):
+    pd.DataFrame(columns=columns).to_csv(TELEMETRY_FILE, index=False)
+
+def save_to_csv(telemetry_data):
+    telemetry_dataframe = pd.DataFrame([telemetry_data])
+    """Appends telemetry data to a CSV file in real time."""
+    telemetry_dataframe.to_csv(TELEMETRY_FILE, mode='a', header=False, index=False)
+
+
 
 def generate_missing_values():
 
@@ -45,41 +60,48 @@ def generate_missing_values():
 
 def read_telemetry():
     global telemetry
-    
+    global packets_received
+
     try:
         while True:
-
+#TODO: Add a SAFE update of telemetry_data even if values != 25
             if not ser.isOpen():
                 ser.open()
             line = ser.readline().decode('utf-8').strip()  # Read line from serial
+            
             if line:
+                #telemetry_data = {}
                 values = line.split(",")
-            if len(values) == 25:
-                # Convert to dictionary
-                telemetry_data = {
-                    'TEAM_ID': int(values[0]),
-                    'MISSION_TIME': datetime.strptime(values[1], "%H:%M:%S"),
-                    'PACKET_COUNT': int(values[2]),
-                    'MODE': values[3],
-                    'STATE': values[4],
-                    'ALTITUDE': float(values[5]),
-                    'TEMPERATURE': float(values[6]),
-                    'PRESSURE': float(values[7]),
-                    'VOLTAGE': float(values[8]),
-                    'GYRO_R': float(values[9]),
-                    'GYRO_P': float(values[10]),
-                    'GYRO_Y': float(values[11]),
-                    "ACCEL_R": float(values[12]), 
-                    "ACCEL_P": float(values[13]), 
-                    "ACCEL_Y": float(values[14]),
-                    "MAG_R": float(values[15]),
-                    "MAG_P": float(values[16]),
-                    "MAG_Y": float(values[17]),
-                    "AUTO_GYRO_ROTATION_RATE": float(values[18]),
-                    'CMD_ECHO': values[23]
-                }
+                if len(values) == 25:
+                    packets_received += 1
+                    # Convert to dictionary
+                    telemetry_data = {
+                        'TEAM_ID': int(values[0]),
+                        'MISSION_TIME': values[1],
+                        'PACKET_COUNT': int(values[2]),
+                        'MODE': values[3],
+                        'STATE': values[4],
+                        'ALTITUDE': float(values[5]) if values[5].strip() else 0.0,
+                        'TEMPERATURE': float(values[6]),
+                        'PRESSURE': float(values[7]),
+                        'VOLTAGE': float(values[8]),
+                        'GYRO_R': float(values[9]),
+                        'GYRO_P': float(values[10]),
+                        'GYRO_Y': float(values[11]),
+                        "ACCEL_R": float(values[12]), 
+                        "ACCEL_P": float(values[13]), 
+                        "ACCEL_Y": float(values[14]),
+                        "MAG_R": float(values[15]),
+                        "MAG_P": float(values[16]),
+                        "MAG_Y": float(values[17]),
+                        "AUTO_GYRO_ROTATION_RATE": float(values[18]),
+                        'CMD_ECHO': values[24] if values[24].strip() else 'No command send yet'
+                    }
 
-                #print(f"Received: {telemetry_data}")
+                    print(f"Received: {telemetry_data}")
+
+                    #Save telemetry to CSV
+                    save_to_csv(telemetry_data)
 
                 generated_values = generate_missing_values()
                 telemetry_data.update(generated_values)
@@ -93,8 +115,8 @@ def read_telemetry():
 
     except KeyboardInterrupt:
         print("Stopping telemetry read.")
-    finally:
-        ser.close()  # Close serial port
+    #finally:
+        #ser.close()  # Close serial port
 
 sim_enabled = False
 sim_activated = False
@@ -116,6 +138,13 @@ def read_simulated_pressure():
         return sim_data["PRESSURE"].iloc[-1]  # Get latest pressure
     return None
 
+def send_pressure_via_xbee(pressure_value):
+    """Send pressure data via XBee"""
+    if pressure_value is not None:
+        message = f"CMD,3134,SIMP,{pressure_value:.2f}"  # Format pressure value
+        ser.write(message.encode())  # Send via XBee
+        print(f"Sent Pressure via XBee: {message.strip()}")
+
 """Send pressure via XBee if in simulation mode"""
 def process_simulation_telemetry():
     global sim_status
@@ -127,13 +156,13 @@ def process_simulation_telemetry():
         # Wait for 1 second before next iteration
         time.sleep(1)
 
+
 thread = threading.Thread(target=read_telemetry, daemon=True)
 thread.start()
 
 # Initialize the Dash app
 app = Dash(__name__)
 
-# Define the layout
 app.layout = html.Div([
     # Main container
     html.Div([
@@ -171,7 +200,6 @@ app.layout = html.Div([
                 id='sim-activate-button',
                 style={'width': '100%', 'marginBottom': '10px'}
             ),
-
             html.Div(id='sim-status'),
 
             html.Button(
@@ -186,6 +214,7 @@ app.layout = html.Div([
                 id='calibrate-button',
                 style={'width': '100%', 'marginBottom': '10px'}
             ),
+            #html.Div(id='command-status'),
             
             html.Button(
                 "Set Time",
@@ -201,6 +230,18 @@ app.layout = html.Div([
 
             # Status Information
             html.Div([
+
+                html.Div([
+                html.Span("Last sent command:", style={'fontWeight': 'bold', 'marginRight': '4px', 'color': 'blue'}),
+                html.Span(id='command-status')],
+                style={'display': 'flex', 'flexDirection': 'row'}),
+
+                html.Div([
+                html.Span("Received packets:", style={'fontWeight': 'bold', 'marginRight': '4px', 'color': 'blue'}),
+                html.Span(id='received-packets')],
+                style={'display': 'flex', 'flexDirection': 'row'}),
+
+
                 html.Div([
                 html.Span("Mission Time:", style={'fontWeight': 'bold', 'marginRight': '4px'}),
                 html.Span(id='mission-time-display')],
@@ -213,7 +254,7 @@ app.layout = html.Div([
 
                 html.Div([
                 html.Span("State:", style={'fontWeight': 'bold', 'marginRight': '4px'}),
-                html.Span("", id='state-display')],
+                html.Span(id='state-display')],
                 style={'display': 'flex', 'flexDirection': 'row'}),
 
                 html.Div([
@@ -284,6 +325,44 @@ app.layout = html.Div([
     )
 ])
 
+# I don't know what G16 means: the ground station shall be able 
+# to activate all mechanisms on command. ???
+
+'''
+# Callback for sending attach/detach container command
+@callback(
+    Output("command-status", "children"),
+    Output("setup-button", "children"),
+    Output("setup-state", "data"),
+    Input("setup-button", "n_clicks"),
+    State("setup-state", "data"),
+    prevent_initial_call=True  
+)
+def send_attach_container_command(n_clicks, is_attached):
+    if n_clicks == 0:
+        return "Attach Container", False  # Initial state
+    # Toggle state
+    setup_state = not is_attached
+    # Send appropriate command
+    message = f"CMD,3134,MEC,SERVO,{'ON' if setup_state else 'OFF'}"
+    ser.write(message.encode()) 
+    # Update button text
+    setup_text = "Detach Container" if setup_state else "Attach Container"
+    command_status = f"Command sent: {message}"
+    return command_status, setup_text, setup_state
+'''
+
+# Callback for sending calibration command
+@callback(
+    Output("command-status", "children"),
+    Input("calibrate-button", "n_clicks"),
+    prevent_initial_call=True  
+)
+def send_calibration_command(n_clicks):
+    message = "CMD,3134,CAL"  
+    ser.write(message.encode())  
+    return "Calibration command sent!"
+
 # Callback for updating simulation status
 @callback(
     [
@@ -309,11 +388,18 @@ def update_simulation(enable_clicks, activate_clicks):
         # When disabling simulation, also reset sim_activated
         if not sim_enabled:
             sim_activated = False
-            
+            message = f"CMD,3134,SIM,DISABLE"  
+            ser.write(message.encode()) 
+        else:
+            message = f"CMD,3134,SIM,ENABLE"  
+            ser.write(message.encode())
     elif button_id == "sim-activate-button":
         # Only toggle activation if simulation is enabled
         if sim_enabled:
             sim_activated = not sim_activated
+            if sim_activated:
+                message = f"CMD,3134,SIM,ACTIVATE"  
+                ser.write(message.encode())
 
     # Compute the simulation status based on the current state
     sim_status = sim_enabled and sim_activated
@@ -326,7 +412,6 @@ def update_simulation(enable_clicks, activate_clicks):
     status_text = "Simulation mode: active" if sim_status else "Simulation mode: inactive"
 
     return enable_text, activate_enabled, status_text
-
 
 # Callback for uploading simulation file
 @callback(
@@ -366,6 +451,7 @@ def start_telemetry(n):
      Output('accelerometer-3d', 'figure'),
      Output('mission-time-display', 'children'),
      Output('team-id-display', 'children'),
+     Output('state-display', 'children'),
      Output('packet-count-display', 'children'),
      Output('mode-display', 'children'),
      Output('command-display', 'children'),
@@ -376,7 +462,7 @@ def start_telemetry(n):
 def update_graphs(n):
 
     if telemetry.empty:
-        return px.line(), px.line(), px.line(), px.line(), px.line()
+        return px.line(), px.line(), px.line(), px.line(), px.line(), px.line(), px.line(), px.line(), px.line(), px.line(),px.line(), px.line(), px.line(), px.line(), px.line(), datetime.now()
 
     lat_default = 52.47
     lon_default = 13.45
@@ -421,6 +507,7 @@ def update_graphs(n):
         )
         return fig
 
+    #TODO add units!!!!
     altitude_fig = px.line(dff, x='MISSION_TIME', y='ALTITUDE', title='Altitude Over Time')
     temperature_fig = px.line(dff, x='MISSION_TIME', y='TEMPERATURE', title='Temperature Over Time')
     pressure_fig = px.line(dff, x='MISSION_TIME', y='PRESSURE', title='Pressure Over Time')
@@ -446,6 +533,7 @@ def update_graphs(n):
         acc_fig,
         latest['MISSION_TIME'],
         latest['TEAM_ID'],
+        latest['STATE'],
         latest['PACKET_COUNT'],
         latest['MODE'],
         latest['CMD_ECHO'],
