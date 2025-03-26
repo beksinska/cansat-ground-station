@@ -11,14 +11,13 @@ import threading
 from datetime import datetime
 import serial
 import os
+import re
 
 SERIAL_PORT = "COM3"  
 BAUD_RATE = 9600
 
 # Open serial port
 ser = serial.Serial(SERIAL_PORT, BAUD_RATE, timeout=1)
-
-start_time = pd.to_datetime("00:00:00", format="%H:%M:%S")
 
 columns = [
     "TEAM_ID", "MISSION_TIME", "PACKET_COUNT", "MODE", "STATE",
@@ -28,8 +27,6 @@ columns = [
     "GPS_TIME", "GPS_ALTITUDE", "GPS_LATITUDE", "GPS_LONGITUDE",
     "GPS_SATS", "CMD_ECHO"
 ]
-
-#TODO: Save telemetry to a csv file
 
 TELEMETRY_FILE = "telemetry_data.csv"
 
@@ -42,18 +39,15 @@ if not os.path.exists(TELEMETRY_FILE):
 
 def save_to_csv(telemetry_data):
     telemetry_dataframe = pd.DataFrame([telemetry_data])
-    """Appends telemetry data to a CSV file in real time."""
+    """Appends telemetry data to a CSV file."""
     telemetry_dataframe.to_csv(TELEMETRY_FILE, mode='a', header=False, index=False)
 
-
-
 def generate_missing_values():
-
-    gps_lat = 28.5729 + np.random.normal(0, 0.0001)  # Simulated GPS drift
-    gps_lon = -80.6490 + np.random.normal(0, 0.0001)
+    gps_lat = 52.5729 + np.random.normal(0, 0.0001)  # Simulated GPS drift
+    gps_lon = 13.4590 + np.random.normal(0, 0.0001)
     gps_alt = np.random.uniform(0, 1000)  # Random altitude between 0-1000m
     gps_sats = np.random.randint(4, 12)
-    gps_time = datetime.now()
+    gps_time = datetime.now().strftime("%H:%M:%S")
     return {
         "GPS_LATITUDE": gps_lat, "GPS_LONGITUDE": gps_lon, "GPS_ALTITUDE": gps_alt, "GPS_SATS": gps_sats, "GPS_TIME": gps_time 
     }
@@ -61,18 +55,18 @@ def generate_missing_values():
 def read_telemetry():
     global telemetry
     global packets_received
-
     try:
         while True:
-#TODO: Add a SAFE update of telemetry_data even if values != 25
             if not ser.isOpen():
-                ser.open()
+                print("Serial port is not open.")
+                break
+
             line = ser.readline().decode('utf-8').strip()  # Read line from serial
             
             if line:
-                #telemetry_data = {}
+                telemetry_data = {}
                 values = line.split(",")
-                if len(values) == 25:
+                if values[0] == "3134":
                     packets_received += 1
                     # Convert to dictionary
                     telemetry_data = {
@@ -95,7 +89,8 @@ def read_telemetry():
                         "MAG_P": float(values[16]),
                         "MAG_Y": float(values[17]),
                         "AUTO_GYRO_ROTATION_RATE": float(values[18]),
-                        'CMD_ECHO': values[24] if values[24].strip() else 'No command send yet'
+                        'CMD_ECHO': values[24] if values[24].strip() else 'No command',
+                        'COMPASS': values[26] if values[26].strip() else '-'
                     }
 
                     print(f"Received: {telemetry_data}")
@@ -115,21 +110,32 @@ def read_telemetry():
 
     except KeyboardInterrupt:
         print("Stopping telemetry read.")
-    #finally:
-        #ser.close()  # Close serial port
+    finally:
+        ser.close()
 
 sim_enabled = False
 sim_activated = False
 sim_status= False
 
 sim_data = pd.DataFrame()
+sim_index = 0
 
 def process_uploaded_file(contents):
-    """Decodes the uploaded CSV file and returns a Pandas DataFrame."""
+    """Decodes the uploaded .txt file and returns a Pandas DataFrame?"""
     content_string = contents.split(',')[1]  # Extract only the Base64 part
-    decoded = base64.b64decode(content_string)  # Decode Base64
-    df = pd.read_csv(io.StringIO(decoded.decode('utf-8')))  # Convert to DataFrame
-    return df
+    decoded = base64.b64decode(content_string).decode('utf-8')  # Decode Base64
+    lines = decoded.splitlines()
+    
+    pressure_values = []
+    # Extract data from each line
+    for line in lines:
+        match = re.search(r"CMD,\$,SIMP,(\d+)", line)
+        if match:
+            pressure = float(match.group(1))
+            pressure_values.append(pressure)
+    if pressure_values:
+        sim_data = pd.DataFrame({"PRESSURE": pressure_values})
+    return sim_data
 
 def read_simulated_pressure():
     """Extract latest pressure value from simulation file"""
@@ -168,7 +174,6 @@ app.layout = html.Div([
     html.Div([
         # Sidebar
         html.Div([
-            
             # File Upload
             dcc.Upload(
                 id='upload-data',
@@ -186,7 +191,7 @@ app.layout = html.Div([
                     'marginBottom': '10px'
                 },
             ),
-            html.Div(id='file-upload-status'),
+            html.Div(id='upload-status'),
 
             # Simulation Control
             html.Button(
@@ -203,7 +208,7 @@ app.layout = html.Div([
             html.Div(id='sim-status'),
 
             html.Button(
-                "Setup",
+                "Attach Container",
                 id='setup-button',
                 style={'width': '100%', 'marginBottom': '10px'}
             ),
@@ -214,17 +219,25 @@ app.layout = html.Div([
                 id='calibrate-button',
                 style={'width': '100%', 'marginBottom': '10px'}
             ),
-            #html.Div(id='command-status'),
             
             html.Button(
                 "Set Time",
                 id='set-time-button',
                 style={'width': '100%', 'marginBottom': '10px'}
             ),
+            dcc.Dropdown(
+                id = 'time-dropdown',
+                options=[
+                    {'label': 'UTC', 'value': 'UTC'},
+                    {'label': 'GPS', 'value': 'GPS'}
+                ],
+                placeholder="Select Time",
+                style={'display': 'none', 'marginBottom': '10px'}
+            ),
 
             html.Button(
                 "Start Telemetry",
-                id='start-telemetry-button',
+                id='telemetry-button',
                 style={'width': '100%', 'marginBottom': '20px'}
             ),
 
@@ -232,15 +245,9 @@ app.layout = html.Div([
             html.Div([
 
                 html.Div([
-                html.Span("Last sent command:", style={'fontWeight': 'bold', 'marginRight': '4px', 'color': 'blue'}),
-                html.Span(id='command-status')],
+                html.Span("Packets Received:", style={'fontWeight': 'bold', 'marginRight': '4px'}),
+                html.Span(id='received-packets-display')],
                 style={'display': 'flex', 'flexDirection': 'row'}),
-
-                html.Div([
-                html.Span("Received packets:", style={'fontWeight': 'bold', 'marginRight': '4px', 'color': 'blue'}),
-                html.Span(id='received-packets')],
-                style={'display': 'flex', 'flexDirection': 'row'}),
-
 
                 html.Div([
                 html.Span("Mission Time:", style={'fontWeight': 'bold', 'marginRight': '4px'}),
@@ -274,15 +281,21 @@ app.layout = html.Div([
 
                 html.Div([
                 html.Span("Satellites:", style={'fontWeight': 'bold', 'marginRight': '4px'}),
-                html.Span("")],
+                html.Span(id='gps-sats-display')],
                 style={'display': 'flex', 'flexDirection': 'row'}),
 
                 html.Div([
                 html.Span("GPS Time:", style={'fontWeight': 'bold', 'marginRight': '4px'}),
                 html.Span(id='gps-time-display')],
                 style={'display': 'flex', 'flexDirection': 'row'}),
+
+                html.Div([
+                html.Span("Compass Reading:", style={'fontWeight': 'bold', 'marginRight': '4px'}),
+                html.Span(id='compass-reading-display')],
+                style={'display': 'flex', 'flexDirection': 'row'})
             ])
-        ], style={
+        ], 
+        style={
             'width': '200px',
             'padding': '20px',
             'backgroundColor': '#f8f9fa',
@@ -322,16 +335,16 @@ app.layout = html.Div([
         id='interval-component',
         interval=1000,  # 1 second interval
         n_intervals=0
-    )
+    ),
+    dcc.Store(id='setup-state', data=False),
+    dcc.Store(id='telemetry-state', data=False)
 ])
 
 # I don't know what G16 means: the ground station shall be able 
 # to activate all mechanisms on command. ???
 
-'''
 # Callback for sending attach/detach container command
 @callback(
-    Output("command-status", "children"),
     Output("setup-button", "children"),
     Output("setup-state", "data"),
     Input("setup-button", "n_clicks"),
@@ -339,29 +352,23 @@ app.layout = html.Div([
     prevent_initial_call=True  
 )
 def send_attach_container_command(n_clicks, is_attached):
-    if n_clicks == 0:
-        return "Attach Container", False  # Initial state
     # Toggle state
     setup_state = not is_attached
+    setup_text = "Detach Container" if setup_state else "Attach Container"
     # Send appropriate command
     message = f"CMD,3134,MEC,SERVO,{'ON' if setup_state else 'OFF'}"
     ser.write(message.encode()) 
-    # Update button text
-    setup_text = "Detach Container" if setup_state else "Attach Container"
-    command_status = f"Command sent: {message}"
-    return command_status, setup_text, setup_state
-'''
+    
+    return setup_text, setup_state
 
 # Callback for sending calibration command
 @callback(
-    Output("command-status", "children"),
     Input("calibrate-button", "n_clicks"),
     prevent_initial_call=True  
 )
 def send_calibration_command(n_clicks):
     message = "CMD,3134,CAL"  
     ser.write(message.encode())  
-    return "Calibration command sent!"
 
 # Callback for updating simulation status
 @callback(
@@ -379,7 +386,7 @@ def send_calibration_command(n_clicks):
 def update_simulation(enable_clicks, activate_clicks):
     button_id = ctx.triggered[0]["prop_id"].split(".")[0]
     print(f"Button ID: {button_id}")
-    global sim_enabled, sim_activated, sim_status
+    global sim_enabled, sim_activated, sim_status, sim_index
 
     # Update states based on the last pressed button:
     if button_id == "sim-enable-button":
@@ -398,6 +405,7 @@ def update_simulation(enable_clicks, activate_clicks):
         if sim_enabled:
             sim_activated = not sim_activated
             if sim_activated:
+                sim_index = 0
                 message = f"CMD,3134,SIM,ACTIVATE"  
                 ser.write(message.encode())
 
@@ -430,17 +438,65 @@ def upload_simulation_file(contents, filename):
             return f"Error processing file: {str(e)}"
     return "No file uploaded."
 
+@callback(
+    Input("interval-component", "n_intervals"),
+    prevent_initial_call=True
+)
+def send_simulated_pressure(n_intervals):
+    global sim_data, sim_status, sim_index
+
+    # Only send pressure if both Sim Enable and Sim Activate are active
+    if sim_status and not sim_data.empty:
+        latest_pressure = sim_data["PRESSURE"].iloc[sim_index % len(sim_data)]
+        sim_index += 1
+        message = f"CMD,3134,SIMP,{latest_pressure}"
+        ser.write(message.encode())
+
+@callback(
+    Output('time-dropdown', 'style'),
+    Input('set-time-button', 'n_clicks'),
+    State('time-dropdown', 'style'),
+    prevent_initial_call=True
+)
+def toggle_time_dropdown(n_clicks, style):
+    style['display'] = 'block' if style['display'] == 'none' else 'none'
+    return style
+
+# Callback for setting time
+@callback(
+    Input('time-dropdown', 'value'),
+    State('gps-time-display', 'children'),
+    prevent_initial_call=True
+)
+def set_time(time_source, gps_time):
+    if time_source == 'GPS':
+        time = gps_time
+    else:
+        time = datetime.now().strftime("%H:%M:%S")
+    message = f"CMD,3134,ST,{time}"
+    ser.write(message.encode())
+
 # Callback for starting telemetry
 @callback(
-        [Output("telemetry-button", "children"), Output("telemetry-status", "children")],
-        Input('start-telemetry-button', 'n_clicks'),
+    Output("telemetry-button", "children"),
+    Output("telemetry-state", "data"),
+    Input("telemetry-button", "n_clicks"),
+    State("telemetry-state", "data"),
+    prevent_initial_call=True  
 )
-def start_telemetry(n):
-    read_telemetry()
+def send_attach_container_command(n_clicks, is_on):
+    # Toggle state
+    state = not is_on
+    text = "Stop Telemetry" if state else "Start Telemetry"
+    # Send appropriate command
+    message = f"CMD,3134,CX,{'ON' if state else 'OFF'}"
+    ser.write(message.encode()) 
+    
+    return text, state
 
 # Main callback for updating all visualizations
 @callback(
-    [Output('pressure-graph', 'figure'),
+    [Output('pressure-graph', 'figure'), 
      Output('altitude-graph', 'figure'),
      Output('temperature-graph', 'figure'),
      Output('voltage-graph', 'figure'),
@@ -455,22 +511,23 @@ def start_telemetry(n):
      Output('packet-count-display', 'children'),
      Output('mode-display', 'children'),
      Output('command-display', 'children'),
-     Output('gps-time-display', 'children')],
+     Output('gps-sats-display', 'children'),
+     Output('gps-time-display', 'children'),
+     Output('received-packets-display', 'children'),
+     Output('compass-reading-display', 'children')],
     Input('interval-component', 'n_intervals'),
     prevent_initial_call=True
 )
 def update_graphs(n):
-
     if telemetry.empty:
-        return px.line(), px.line(), px.line(), px.line(), px.line(), px.line(), px.line(), px.line(), px.line(), px.line(),px.line(), px.line(), px.line(), px.line(), px.line(), datetime.now()
+        return px.line(), px.line(), px.line(), px.line(), px.line(), px.line(), px.line(), px.line(), px.line(), px.line(), px.line(), px.line(), px.line(), px.line(), px.line(), "0", datetime.now(), "-", "-"
 
-    lat_default = 52.47
-    lon_default = 13.45
     # Limit to last 100 readings for smoother visualization
     dff = telemetry.tail(100)
 
     # Create map
     def create_map(lat, lon):
+
         fig = go.Figure()
 
         fig.add_trace(go.Scattermapbox(
@@ -480,13 +537,14 @@ def update_graphs(n):
             marker=dict(size=10)
         ))
         fig.update_layout(
+            title='Real Time Location',
             mapbox=dict(
                 style='open-street-map',
                 center=dict(lat=dff[lat].iloc[-1], lon=dff[lon].iloc[-1]),
                 zoom=13
             ),
             margin=dict(l=10, r=0, t=30, b=0),
-            height=250
+            height=300
         )
         return fig
     
@@ -507,17 +565,15 @@ def update_graphs(n):
         )
         return fig
 
-    #TODO add units!!!!
-    altitude_fig = px.line(dff, x='MISSION_TIME', y='ALTITUDE', title='Altitude Over Time')
-    temperature_fig = px.line(dff, x='MISSION_TIME', y='TEMPERATURE', title='Temperature Over Time')
-    pressure_fig = px.line(dff, x='MISSION_TIME', y='PRESSURE', title='Pressure Over Time')
-    voltage_fig = px.line(dff, x='MISSION_TIME', y='VOLTAGE', title='Voltage Over Time')
-    gyro_rotation_rate_fig = px.line(dff, x='MISSION_TIME', y='GYRO_R', title='Gyro Rotation Rate Over Time')
+    altitude_fig = px.line(dff, x='MISSION_TIME', y='ALTITUDE', title='Altitude (m) Over Time')
+    temperature_fig = px.line(dff, x='MISSION_TIME', y='TEMPERATURE', title='Temperature (°C) Over Time')
+    pressure_fig = px.line(dff, x='MISSION_TIME', y='PRESSURE', title='Pressure (kPa) Over Time')
+    voltage_fig = px.line(dff, x='MISSION_TIME', y='VOLTAGE', title='Voltage (V) Over Time')
+    gyro_rotation_rate_fig = px.line(dff, x='MISSION_TIME', y='AUTO_GYRO_ROTATION_RATE', title='Gyro Rotation Rate (°/s) Over Time')
     map_fig = create_map('GPS_LATITUDE', 'GPS_LONGITUDE')
-    mag_fig = create_3d_plot('MAG_R', 'MAG_P', 'MAG_Y', 'Magnetometer Readings')
-    gyro_fig = create_3d_plot('GYRO_R', 'GYRO_P', 'GYRO_Y', 'Gyro Readings')
-    acc_fig = create_3d_plot('ACCEL_R', 'ACCEL_P', 'ACCEL_Y', 'Accelerometer Readings')
-    
+    mag_fig = create_3d_plot('MAG_R', 'MAG_P', 'MAG_Y', 'Magnetometer Readings (G)')
+    gyro_fig = create_3d_plot('GYRO_R', 'GYRO_P', 'GYRO_Y', 'Gyro Readings (°/s)')
+    acc_fig = create_3d_plot('ACCEL_R', 'ACCEL_P', 'ACCEL_Y', 'Accelerometer Readings (°/s²)')
 
     latest = dff.tail(1).to_dict('records')[0]
 
@@ -537,8 +593,11 @@ def update_graphs(n):
         latest['PACKET_COUNT'],
         latest['MODE'],
         latest['CMD_ECHO'],
-        latest['GPS_TIME']
-        ]
+        latest['GPS_SATS'],
+        latest['GPS_TIME'],
+        packets_received,
+        latest['COMPASS']
+    ]
     
 if __name__ == '__main__':
     app.run(debug=False, port=8051)
