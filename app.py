@@ -191,7 +191,8 @@ app.layout = html.Div([
                     'marginBottom': '10px'
                 },
             ),
-            html.Div(id='upload-status'),
+            html.Div(id='upload-status',
+                     style={'marginBottom': '10px'}),
 
             # Simulation Control
             html.Button(
@@ -203,9 +204,25 @@ app.layout = html.Div([
             html.Button(
                 "SIM Activate",
                 id='sim-activate-button',
+                disabled = True,
                 style={'width': '100%', 'marginBottom': '10px'}
             ),
-            html.Div(id='sim-status'),
+            html.Div(id='sim-status',
+                     style={'marginBottom': '10px'}),
+
+            dcc.Input(
+                id='sim-pressure-input',
+                type='number',
+                placeholder='Enter Pressure Value',
+                style={'width': '160px', 
+                       'marginBottom': '5px'}
+            ),
+            html.Button(
+                "Send Pressure",
+                id='sim-pressure-button',
+                disabled=True,
+                style={'width': '100%', 'marginBottom': '10px'}
+            ),
 
             html.Button(
                 "Attach Container",
@@ -340,9 +357,6 @@ app.layout = html.Div([
     dcc.Store(id='telemetry-state', data=False)
 ])
 
-# I don't know what G16 means: the ground station shall be able 
-# to activate all mechanisms on command. ???
-
 # Callback for sending attach/detach container command
 @callback(
     Output("setup-button", "children"),
@@ -420,6 +434,21 @@ def update_simulation(enable_clicks, activate_clicks):
     status_text = "Simulation mode: active" if sim_status else "Simulation mode: inactive"
 
     return enable_text, activate_enabled, status_text
+
+# Callback for sending pressure value
+@callback(
+    Output("sim-pressure-button", "disabled"),
+    Input("sim-pressure-button", "n_clicks"),
+    State("sim-pressure-input", "value"),
+    prevent_initial_call=True
+)
+def send_pressure(n_clicks, pressure_value):
+    global sim_status
+    if sim_status and pressure_value is not None:
+        message = f"CMD,3134,SIMP,{pressure_value:.2f}"
+        ser.write(message.encode())
+        return False
+    return True
 
 # Callback for uploading simulation file
 @callback(
