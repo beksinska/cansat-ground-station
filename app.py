@@ -162,6 +162,24 @@ def process_simulation_telemetry():
         # Wait for 1 second before next iteration
         time.sleep(1)
 
+def apply_graph_styling(fig):
+    """Applies consistent styling to all figures."""
+    fig.update_layout(
+        xaxis=dict(title_font=dict(size=12)),  # Set X-axis label font size
+        yaxis=dict(title_font=dict(size=12)),  # Set Y-axis label font size
+    )
+    return fig
+
+def apply_top_row_styling(fig):
+    """Applies consistent styling to all figures in the top row."""
+    fig.update_layout(
+        xaxis=dict(title_font=dict(size=12)),
+        yaxis=dict(title_font=dict(size=12)),
+        title=dict(
+            pad=dict(b=2)  # Reduce bottom padding (default is ~10)
+        )
+    )
+    return fig
 
 thread = threading.Thread(target=read_telemetry, daemon=True)
 thread.start()
@@ -192,6 +210,7 @@ app.layout = html.Div([
                 },
             ),
             html.Div(id='upload-status',
+                     children='No file uploaded.',
                      style={'marginBottom': '10px'}),
 
             # Simulation Control
@@ -205,7 +224,7 @@ app.layout = html.Div([
                 "SIM Activate",
                 id='sim-activate-button',
                 disabled = True,
-                style={'width': '100%', 'marginBottom': '10px'}
+                style={'width': '100%', 'marginBottom': '5px'}
             ),
             html.Div(id='sim-status',
                      style={'marginBottom': '10px'}),
@@ -214,7 +233,8 @@ app.layout = html.Div([
                 id='sim-pressure-input',
                 type='number',
                 placeholder='Enter Pressure Value',
-                style={'width': '160px', 
+                style={'width': '200px', 
+                       'boxSizing': 'border-box',
                        'marginBottom': '5px'}
             ),
             html.Button(
@@ -316,7 +336,6 @@ app.layout = html.Div([
             'width': '200px',
             'padding': '20px',
             'backgroundColor': '#f8f9fa',
-            'borderRadius': '5px',
             'marginRight': '20px',
             'height': '100vh',
             'overflowY': 'auto'
@@ -326,27 +345,27 @@ app.layout = html.Div([
         html.Div([
             # First row - Pressure, Altitude, Temperature
             html.Div([
-                dcc.Graph(id='pressure-graph', style={'width': '33%', 'height': '33%'}),
-                dcc.Graph(id='altitude-graph', style={'width': '33%', 'height': '33%'}),
-                dcc.Graph(id='temperature-graph', style={'width': '33%', 'height': '33%'})
-            ], style={'display': 'flex', 'marginBottom': '20px'}),
+                dcc.Graph(id='pressure-graph', style={'width': '33%', 'height': 'calc(100vh/3)'}),
+                dcc.Graph(id='altitude-graph', style={'width': '33%', 'height': 'calc(100vh/3)'}),
+                dcc.Graph(id='temperature-graph', style={'width': '33%', 'height': 'calc(100vh/3)'})
+            ], style={'display': 'flex', 'marginBottom': '10px'}),
             
             # Second row - Voltage, Gyro rotation, Map
             html.Div([
-                dcc.Graph(id='voltage-graph', style={'width': '33%', 'height': '33%'}),
-                dcc.Graph(id='gyro-rotation-rate-graph', style={'width': '33%', 'height': '33%'}),
-                dcc.Graph(id='map-plot', style={'width': '33%', 'height': '33%'})
-            ], style={'display': 'flex', 'marginBottom': '20px'}),
+                dcc.Graph(id='voltage-graph', style={'width': '33%', 'height': 'calc(100vh/3)'}),
+                dcc.Graph(id='gyro-rotation-rate-graph', style={'width': '33%', 'height': 'calc(100vh/3)'}),
+                dcc.Graph(id='map-plot', style={'width': '33%', 'height': 'calc(100vh/3)', 'paddingTop': '20px'})
+            ], style={'display': 'flex', 'marginBottom': '10px'}),
             
             # Third row - Magnetometer, Gyro, Accelerometer
             html.Div([
-                dcc.Graph(id='magnetometer-3d', style={'width': '33%', 'height': '33%'}),
-                dcc.Graph(id='gyro-graph', style={'width': '33%', 'height': '33%'}),
-                dcc.Graph(id='accelerometer-3d', style={'width': '33%', 'height': '33%'})
+                dcc.Graph(id='magnetometer-3d', style={'width': '33%', 'height': 'calc(100vh/3)'}),
+                dcc.Graph(id='gyro-graph', style={'width': '33%', 'height': 'calc(100vh/3)'}),
+                dcc.Graph(id='accelerometer-3d', style={'width': '33%', 'height': 'calc(100vh/3)'})
             ], style={'display': 'flex'})
             
-        ], style={'flex': '1', 'height': '100vh', 'overflowY': 'auto', 'padding': '10px'}),
-    ], style={'display': 'flex', 'font-size': '16px'}),
+        ], style={'flex': '1', 'height': '100vh', 'justifyContent': 'space-between', 'display': 'flex', 'flexDirection': 'column'}),
+    ], style={'display': 'flex', 'font-size': '16px', 'height': '100vh', 'overflow': 'hidden'}),
     
     dcc.Interval(
         id='interval-component',
@@ -594,19 +613,28 @@ def update_graphs(n):
         )
         return fig
 
-    altitude_fig = px.line(dff, x='MISSION_TIME', y='ALTITUDE', title='Altitude (m) Over Time')
-    temperature_fig = px.line(dff, x='MISSION_TIME', y='TEMPERATURE', title='Temperature (°C) Over Time')
-    pressure_fig = px.line(dff, x='MISSION_TIME', y='PRESSURE', title='Pressure (kPa) Over Time')
-    voltage_fig = px.line(dff, x='MISSION_TIME', y='VOLTAGE', title='Voltage (V) Over Time')
-    gyro_rotation_rate_fig = px.line(dff, x='MISSION_TIME', y='AUTO_GYRO_ROTATION_RATE', title='Gyro Rotation Rate (°/s) Over Time')
-    map_fig = create_map('GPS_LATITUDE', 'GPS_LONGITUDE')
-    mag_fig = create_3d_plot('MAG_R', 'MAG_P', 'MAG_Y', 'Magnetometer Readings (G)')
-    gyro_fig = create_3d_plot('GYRO_R', 'GYRO_P', 'GYRO_Y', 'Gyro Readings (°/s)')
-    acc_fig = create_3d_plot('ACCEL_R', 'ACCEL_P', 'ACCEL_Y', 'Accelerometer Readings (°/s²)')
+    top_row_figures = [
+        px.line(dff, x='MISSION_TIME', y='ALTITUDE', title='Altitude (m) Over Time'),
+        px.line(dff, x='MISSION_TIME', y='TEMPERATURE', title='Temperature (°C) Over Time'),
+        px.line(dff, x='MISSION_TIME', y='PRESSURE', title='Pressure (kPa) Over Time'),
+    ]
+
+    top_row_figures = [apply_top_row_styling(fig) for fig in top_row_figures]
+
+    figures = [
+        px.line(dff, x='MISSION_TIME', y='VOLTAGE', title='Voltage (V) Over Time'),
+        px.line(dff, x='MISSION_TIME', y='AUTO_GYRO_ROTATION_RATE', title='Gyro Rotation Rate (°/s) Over Time'),
+        create_map('GPS_LATITUDE', 'GPS_LONGITUDE'),
+        create_3d_plot('MAG_R', 'MAG_P', 'MAG_Y', 'Magnetometer Readings (G)'),
+        create_3d_plot('GYRO_R', 'GYRO_P', 'GYRO_Y', 'Gyro Readings (°/s)'),
+        create_3d_plot('ACCEL_R', 'ACCEL_P', 'ACCEL_Y', 'Accelerometer Readings (°/s²)')
+    ]
+
+    figures = [apply_graph_styling(fig) for fig in figures]
 
     latest = dff.tail(1).to_dict('records')[0]
 
-    return [
+    """
         pressure_fig,
         altitude_fig,
         temperature_fig,
@@ -616,6 +644,8 @@ def update_graphs(n):
         mag_fig,
         gyro_fig,
         acc_fig,
+        """
+    return top_row_figures + figures + [
         latest['MISSION_TIME'],
         latest['TEAM_ID'],
         latest['STATE'],
