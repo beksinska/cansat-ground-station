@@ -12,13 +12,13 @@ from datetime import datetime
 import serial
 import os
 import re
+import folium
 
 SERIAL_PORT = "COM3"  
 BAUD_RATE = 9600
 
 # Open serial port
 ser = serial.Serial(SERIAL_PORT, BAUD_RATE, timeout=1)
-
 columns = [
     "TEAM_ID", "MISSION_TIME", "PACKET_COUNT", "MODE", "STATE",
     "ALTITUDE", "TEMPERATURE", "PRESSURE", "VOLTAGE",
@@ -36,6 +36,28 @@ packets_received = 0
 
 if not os.path.exists(TELEMETRY_FILE):
     pd.DataFrame(columns=columns).to_csv(TELEMETRY_FILE, index=False)
+
+def update_folium_map(lat, lon):
+    fmap = folium.Map(location=[lat, lon], zoom_start=15)
+    folium.Marker([lat, lon]).add_to(fmap)
+    fmap.save('assets/offline_map.html')
+
+# Create 3D plots
+def create_3d_plot(x_data, y_data, z_data, title, dff):
+    fig = go.Figure()
+    fig.add_trace(go.Scatter3d(
+        x=dff[x_data],
+        y=dff[y_data],
+        z=dff[z_data],
+        mode='lines',
+        name=title
+    ))
+    fig.update_layout(
+        title=title,
+        margin=dict(l=0, r=0, t=30, b=0),
+        height=300
+    )
+    return fig
 
 def save_to_csv(telemetry_data):
     telemetry_dataframe = pd.DataFrame([telemetry_data])
@@ -64,6 +86,7 @@ def read_telemetry():
             line = ser.readline().decode('utf-8').strip()  # Read line from serial
             
             if line:
+                print(f"Raw Data: {line}")  # Debugging line
                 telemetry_data = {}
                 values = line.split(",")
                 if values[0] == "3134":
@@ -89,8 +112,7 @@ def read_telemetry():
                         "MAG_P": float(values[16]),
                         "MAG_Y": float(values[17]),
                         "AUTO_GYRO_ROTATION_RATE": float(values[18]),
-                        'CMD_ECHO': values[24] if values[24].strip() else 'No command',
-                        'COMPASS': values[26] if values[26].strip() else '-'
+                        'CMD_ECHO': values[24] if values[24].strip() else 'No command'
                     }
 
                     print(f"Received: {telemetry_data}")
@@ -121,7 +143,7 @@ sim_data = pd.DataFrame()
 sim_index = 0
 
 def process_uploaded_file(contents):
-    """Decodes the uploaded .txt file and returns a Pandas DataFrame?"""
+    """Decodes the uploaded .txt file and returns a Pandas DataFrame"""
     content_string = contents.split(',')[1]  # Extract only the Base64 part
     decoded = base64.b64decode(content_string).decode('utf-8')  # Decode Base64
     lines = decoded.splitlines()
@@ -141,13 +163,13 @@ def read_simulated_pressure():
     """Extract latest pressure value from simulation file"""
     global sim_data
     if not sim_data.empty:
-        return sim_data["PRESSURE"].iloc[-1]  # Get latest pressure
+        return sim_data["PRESSURE"].iloc[-1]  # Get latest SIMULATED pressure
     return None
 
 def send_pressure_via_xbee(pressure_value):
     """Send pressure data via XBee"""
     if pressure_value is not None:
-        message = f"CMD,3134,SIMP,{pressure_value:.2f}"  # Format pressure value
+        message = f"CMD,3134,SIMP,{pressure_value:.2f}"  # Format SIMULATED pressure value
         ser.write(message.encode())  # Send via XBee
         print(f"Sent Pressure via XBee: {message.strip()}")
 
@@ -324,11 +346,6 @@ app.layout = html.Div([
                 html.Div([
                 html.Span("GPS Time:", style={'fontWeight': 'bold', 'marginRight': '4px'}),
                 html.Span(id='gps-time-display')],
-                style={'display': 'flex', 'flexDirection': 'row'}),
-
-                html.Div([
-                html.Span("Compass Reading:", style={'fontWeight': 'bold', 'marginRight': '4px'}),
-                html.Span(id='compass-reading-display')],
                 style={'display': 'flex', 'flexDirection': 'row'})
             ])
         ], 
@@ -354,7 +371,10 @@ app.layout = html.Div([
             html.Div([
                 dcc.Graph(id='voltage-graph', style={'width': '33%', 'height': 'calc(100vh/3)'}),
                 dcc.Graph(id='gyro-rotation-rate-graph', style={'width': '33%', 'height': 'calc(100vh/3)'}),
-                dcc.Graph(id='map-plot', style={'width': '33%', 'height': 'calc(100vh/3)', 'paddingTop': '20px'})
+                html.Iframe(id='map-plot',
+                    src="/assets/offline_map.html",
+                    style={"width": "33%", "height": 'calc(100vh/3)'}
+                )
             ], style={'display': 'flex', 'marginBottom': '10px'}),
             
             # Third row - Magnetometer, Gyro, Accelerometer
@@ -400,9 +420,10 @@ def send_attach_container_command(n_clicks, is_attached):
     prevent_initial_call=True  
 )
 def send_calibration_command(n_clicks):
+    if not ser.isOpen():
+        ser.open()
     message = "CMD,3134,CAL"  
     ser.write(message.encode())  
-
 # Callback for updating simulation status
 @callback(
     [
@@ -532,86 +553,48 @@ def set_time(time_source, gps_time):
     State("telemetry-state", "data"),
     prevent_initial_call=True  
 )
-def send_attach_container_command(n_clicks, is_on):
+def send_telemetry_command(n_clicks, is_on):
+    if not ser.isOpen():
+        ser.open()
     # Toggle state
     state = not is_on
     text = "Stop Telemetry" if state else "Start Telemetry"
     # Send appropriate command
     message = f"CMD,3134,CX,{'ON' if state else 'OFF'}"
     ser.write(message.encode()) 
-    
     return text, state
 
 # Main callback for updating all visualizations
 @callback(
-    [Output('pressure-graph', 'figure'), 
-     Output('altitude-graph', 'figure'),
-     Output('temperature-graph', 'figure'),
-     Output('voltage-graph', 'figure'),
-     Output('gyro-rotation-rate-graph', 'figure'),
-     Output('map-plot', 'figure'),
-     Output('magnetometer-3d', 'figure'),
-     Output('gyro-graph', 'figure'),
-     Output('accelerometer-3d', 'figure'),
-     Output('mission-time-display', 'children'),
-     Output('team-id-display', 'children'),
-     Output('state-display', 'children'),
-     Output('packet-count-display', 'children'),
-     Output('mode-display', 'children'),
-     Output('command-display', 'children'),
-     Output('gps-sats-display', 'children'),
-     Output('gps-time-display', 'children'),
-     Output('received-packets-display', 'children'),
-     Output('compass-reading-display', 'children')],
+    Output('pressure-graph', 'figure'), 
+    Output('altitude-graph', 'figure'),
+    Output('temperature-graph', 'figure'),
+    Output('map-plot', 'srcDoc'),
+    Output('voltage-graph', 'figure'),
+    Output('gyro-rotation-rate-graph', 'figure'),
+    Output('magnetometer-3d', 'figure'),
+    Output('gyro-graph', 'figure'),
+    Output('accelerometer-3d', 'figure'),
+    Output('mission-time-display', 'children'),
+    Output('team-id-display', 'children'),
+    Output('state-display', 'children'),
+    Output('packet-count-display', 'children'),
+    Output('mode-display', 'children'),
+    Output('command-display', 'children'),
+    Output('gps-sats-display', 'children'),
+    Output('gps-time-display', 'children'),
+    Output('received-packets-display', 'children'),
     Input('interval-component', 'n_intervals'),
     prevent_initial_call=True
 )
 def update_graphs(n):
+    with open('assets/offline_map.html', 'r', encoding = 'utf-8') as f:
+        map = f.read()
     if telemetry.empty:
-        return px.line(), px.line(), px.line(), px.line(), px.line(), px.line(), px.line(), px.line(), px.line(), px.line(), px.line(), px.line(), px.line(), px.line(), px.line(), "0", datetime.now(), "-", "-"
+        return px.line(), px.line(), px.line(), px.line(), px.line(), px.line(), px.line(), px.line(), px.line(), px.line(), px.line(), px.line(), px.line(), px.line(), px.line(), "0", datetime.now(), "-"
 
     # Limit to last 100 readings for smoother visualization
     dff = telemetry.tail(100)
-
-    # Create map
-    def create_map(lat, lon):
-
-        fig = go.Figure()
-
-        fig.add_trace(go.Scattermapbox(
-            lat=dff[lat],
-            lon=dff[lon],
-            mode='lines+markers',
-            marker=dict(size=10)
-        ))
-        fig.update_layout(
-            title='Real Time Location',
-            mapbox=dict(
-                style='open-street-map',
-                center=dict(lat=dff[lat].iloc[-1], lon=dff[lon].iloc[-1]),
-                zoom=13
-            ),
-            margin=dict(l=10, r=0, t=30, b=0),
-            height=300
-        )
-        return fig
-    
-    # Create 3D plots
-    def create_3d_plot(x_data, y_data, z_data, title):
-        fig = go.Figure()
-        fig.add_trace(go.Scatter3d(
-            x=dff[x_data],
-            y=dff[y_data],
-            z=dff[z_data],
-            mode='lines',
-            name=title
-        ))
-        fig.update_layout(
-            title=title,
-            margin=dict(l=0, r=0, t=30, b=0),
-            height=300
-        )
-        return fig
 
     top_row_figures = [
         px.line(dff, x='MISSION_TIME', y='ALTITUDE', title='Altitude (m) Over Time'),
@@ -624,28 +607,21 @@ def update_graphs(n):
     figures = [
         px.line(dff, x='MISSION_TIME', y='VOLTAGE', title='Voltage (V) Over Time'),
         px.line(dff, x='MISSION_TIME', y='AUTO_GYRO_ROTATION_RATE', title='Gyro Rotation Rate (°/s) Over Time'),
-        create_map('GPS_LATITUDE', 'GPS_LONGITUDE'),
-        create_3d_plot('MAG_R', 'MAG_P', 'MAG_Y', 'Magnetometer Readings (G)'),
-        create_3d_plot('GYRO_R', 'GYRO_P', 'GYRO_Y', 'Gyro Readings (°/s)'),
-        create_3d_plot('ACCEL_R', 'ACCEL_P', 'ACCEL_Y', 'Accelerometer Readings (°/s²)')
+        create_3d_plot('MAG_R', 'MAG_P', 'MAG_Y', 'Magnetometer Readings (G)', dff),
+        create_3d_plot('GYRO_R', 'GYRO_P', 'GYRO_Y', 'Gyro Readings (°/s)', dff),
+        create_3d_plot('ACCEL_R', 'ACCEL_P', 'ACCEL_Y', 'Accelerometer Readings (°/s²)', dff)
     ]
 
     figures = [apply_graph_styling(fig) for fig in figures]
 
     latest = dff.tail(1).to_dict('records')[0]
+    
+    update_folium_map(latest["GPS_LATITUDE"], latest["GPS_LONGITUDE"])
 
-    """
-        pressure_fig,
-        altitude_fig,
-        temperature_fig,
-        voltage_fig,
-        gyro_rotation_rate_fig,
-        map_fig,
-        mag_fig,
-        gyro_fig,
-        acc_fig,
-        """
-    return top_row_figures + figures + [
+    with open('assets/offline_map.html', 'r', encoding = 'utf-8') as f:
+        map = f.read()
+
+    return top_row_figures + [map] + figures + [
         latest['MISSION_TIME'],
         latest['TEAM_ID'],
         latest['STATE'],
@@ -654,8 +630,7 @@ def update_graphs(n):
         latest['CMD_ECHO'],
         latest['GPS_SATS'],
         latest['GPS_TIME'],
-        packets_received,
-        latest['COMPASS']
+        packets_received
     ]
     
 if __name__ == '__main__':
