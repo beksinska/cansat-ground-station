@@ -19,6 +19,7 @@ BAUD_RATE = 9600
 
 # Open serial port
 ser = serial.Serial(SERIAL_PORT, BAUD_RATE, timeout=1)
+
 columns = [
     "TEAM_ID", "MISSION_TIME", "PACKET_COUNT", "MODE", "STATE",
     "ALTITUDE", "TEMPERATURE", "PRESSURE", "VOLTAGE",
@@ -91,7 +92,6 @@ def read_telemetry():
                 values = line.split(",")
                 if values[0] == "3134":
                     packets_received += 1
-                    # Convert to dictionary
                     telemetry_data = {
                         'TEAM_ID': int(values[0]),
                         'MISSION_TIME': values[1],
